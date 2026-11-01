@@ -4,8 +4,8 @@
   'use strict';
   const TAU = Math.PI * 2;
   const W = 1000, H = 1000;            // world size (letterboxed to screen)
-  const GAP = 0.80;                    // gap opening (radians, ~46deg)
-  const RELEASE_TOL = 0.24;            // gap centre within this of a crossing -> link slips off
+  const GAP = 0.80;  // declared before RELEASE_TOL                    // gap opening (radians, ~46deg)
+  const RELEASE_TOL = GAP / 2 - 0.06;  // crossing anywhere inside the visible gap (less the partner's half-thickness) -> link slips off
   const TAB_TOL = 0.26;                // tab within this of a crossing -> blocked (tab can't pass a ring)
   const STEP = 0.02;                   // rotation step for collision stepping
   const COLORS = ['#F796A0', '#FFDE7D', '#8CD6AA', '#8CB8F0', '#C4A0E8', '#FFB882', '#9EDCDC'];
@@ -119,6 +119,13 @@
     return null;
   }
 
+  // Nearest crossing (of any linked partner) the gap could be eased onto: signed delta or null
+  function magnet(s, i, range) {
+    const R = s.rings[i]; let best = null;
+    for (const j of partners(s, i)) { const cr = crossings(R, s.rings[j]); if (!cr) continue;
+      for (const c of cr) { const d = norm(c - R.rot); if (Math.abs(d) <= range && reach(s, i, R.rot + d) !== null && (best === null || Math.abs(d) < Math.abs(best))) best = d; } }
+    return best;
+  }
   // Greedy solver (releasing a link never removes options, so greedy is complete for twist moves).
   function solve(s0, limit = 60) {
     const s = clone(s0), moves = [];
@@ -231,6 +238,6 @@
   const cache = {};
   function getLevel(n) { if (!cache[n]) cache[n] = HAND[n] ? HAND[n]() : generate(n); return clone(cache[n]); }
 
-  const api = { TAU, W, H, GAP, COLORS, norm, crossings, partners, settle, rotateCollect, slideCollect, solve, clone, getLevel, initialOK, lockedLinks, SHIPPED: 15, tryRotate, canPlace };
+  const api = { magnet, reach, TAU, W, H, GAP, COLORS, norm, crossings, partners, settle, rotateCollect, slideCollect, solve, clone, getLevel, initialOK, lockedLinks, SHIPPED: 15, tryRotate, canPlace };
   if (typeof module !== 'undefined') module.exports = api; else root.TTR = api;
 })(this);

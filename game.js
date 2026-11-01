@@ -25,8 +25,8 @@
   };
 
   // ---------- state ----------
-  let screen = 'map', level = 1, S = null, undo = [], anims = [], doorGlow = {}, hint = null, wobble = {}, won = 0, drag = null, now = 0;
-  function start(n) { level = n; S = T.getLevel(n); S.rings.forEach(R => { R.gripA = R.rot + R.gripOff; }); fitView(); placeDoors(); settleGrips(); S.rings.forEach(R => { if (R.gripT !== undefined) { R.gripA = R.gripT; R.gripT = undefined; } }); undo = []; anims = []; doorGlow = {}; hint = null; wobble = {}; won = 0; drag = null; screen = 'play'; }
+  let ease = null, screen = 'map', level = 1, S = null, undo = [], anims = [], doorGlow = {}, hint = null, wobble = {}, won = 0, drag = null, now = 0;
+  function start(n) { ease = null; level = n; S = T.getLevel(n); S.rings.forEach(R => { R.gripA = R.rot + R.gripOff; }); fitView(); placeDoors(); settleGrips(); S.rings.forEach(R => { if (R.gripT !== undefined) { R.gripA = R.gripT; R.gripT = undefined; } }); undo = []; anims = []; doorGlow = {}; hint = null; wobble = {}; won = 0; drag = null; screen = 'play'; }
 
   // ---------- layout ----------
   let L = {};
@@ -138,6 +138,9 @@
       if (g > 0) { ctx.beginPath(); ctx.arc(D.x, D.y, 70 + 20 * g, 0, TAU); ctx.fillStyle = `rgba(255,236,150,${0.8 * g})`; ctx.fill(); }
       if (R.alive || g > 0) pill(D.x, D.y, D.vert ? 44 : 110, D.vert ? 110 : 44, R.color);
     });
+    if (ease) { const R = S.rings[ease.i]; // smooth glide onto the crossing / notch
+      if (!R || !R.alive || Math.abs(ease.left) < 0.001) ease = null;
+      else { const st = Math.sign(ease.left) * Math.min(0.06, Math.abs(ease.left)); const rr = T.rotateCollect(S, ease.i, st); R.gripA += rr.done; ease.left -= st; handle(rr.ev.filter(e => e.type !== 'bump'), ease.i); if (rr.done === 0) ease = null; if (!ease) settleGrips(); } }
     for (const R of S.rings) if (R.gripT !== undefined) { R.gripA += (R.gripT - R.gripA) * 0.2; if (Math.abs(R.gripT - R.gripA) < 0.002) { R.gripA = R.gripT; R.gripT = undefined; } }
     const alive = S.rings.map((R, i) => [R, i]).filter(([R]) => R.alive);
     for (const [R, i] of alive) {
@@ -275,9 +278,9 @@
     if (Math.hypot(px - L.home.x, py - L.home.y) < L.btn * 0.6) { sfx.tap(); screen = 'map'; return; }
     for (const b of L.bt) if (Math.hypot(px - b.x, py - b.y) < L.btn * 0.6) { button(b.id); return; }
     if (drag) return; // one ring at a time: extra fingers are ignored (mash-proof)
-    const w = toW(px, py), hit = pickRing(w); if (!hit) return;
+    const w = toW(px, py), hit = pickRing(w); if (!hit) return; ease = null;
     const R = S.rings[hit.i];
-    drag = { id, i: hit.i, kind: hit.kind, last: w, ang: Math.atan2(w.y - R.y, w.x - R.x), snap: JSON.stringify(T.clone(S)) };
+    drag = { id, i: hit.i, kind: 'grip', last: w, ang: Math.atan2(w.y - R.y, w.x - R.x), snap: JSON.stringify(T.clone(S)) };
   }
   function move(px, py, id) {
     if (!drag || drag.id !== id || screen !== 'play') return;
@@ -288,25 +291,22 @@
       const r = T.rotateCollect(S, drag.i, want); drag.ang += r.done; R.gripA += r.done; R.gripT = undefined;
       if (Math.floor(R.rot / (Math.PI / 12)) !== before && now - lastTick > 40) { sfx.tick(); lastTick = now; }
       handle(r.ev, drag.i);
-    } else {
-      const dx = w.x - drag.last.x, dy = w.y - drag.last.y;
-      const ev = T.slideCollect(S, drag.i, dx, dy); drag.last = w; handle(ev, drag.i);
     }
   }
   function up(id) {
     if (!drag || drag.id !== id) return; const ds = drag.snap, di = drag.i, kind = drag.kind;
     const R = S.rings[di];
     if (R.alive && kind === 'grip') { // gentle snap to nearest 15deg notch
-      const step = Math.PI / 12, tgt = Math.round(R.rot / step) * step; const rr = T.rotateCollect(S, di, tgt - R.rot); R.gripA += rr.done; handle(rr.ev, di);
+      const mg = T.magnet(S, di, 0.6), step = Math.PI / 12, d0 = mg !== null ? mg : Math.round(R.rot / step) * step - R.rot; if (Math.abs(d0) > 0.001) { ease = { i: di, left: d0 }; }
     }
     if (S.rings.some(Q => Q.alive) && !T.solve(S)) { // never leave Molly stuck: a move into a dead end gently springs back
       const tr = S.tray; S = JSON.parse(ds); S.tray = tr; placeDoors(); wobble[di] = now; sfx.bump(); drag = null; return;
     }
     drag = null; settleGrips();
-    if (JSON.stringify(T.clone(S)) !== ds) { undo.push(ds); if (undo.length > 200) undo.shift(); hint = null; }
+    if (JSON.stringify(T.clone(S)) !== ds || ease) { undo.push(ds); if (undo.length > 200) undo.shift(); hint = null; }
   }
   function button(id) {
-    sfx.tap();
+    sfx.tap(); ease = null;
     if (id === 'undo' && undo.length) { const tr = S.tray; S = JSON.parse(undo.pop()); S.tray = S.tray || tr; placeDoors(); anims = []; hint = null; }
     if (id === 'restart') { undo.push(JSON.stringify(T.clone(S))); const tr = S.tray; S = T.getLevel(level); S.rings.forEach(R => R.gripA = R.rot + R.gripOff); S.tray = tr; placeDoors(); anims = []; hint = null; }
     if (id === 'hint') { const sol = T.solve(S); if (sol && sol.length) hint = { i: sol[0].i, delta: sol[0].delta, t0: now }; }
@@ -339,6 +339,7 @@
         if (k % 50 === 0) await wait(1);
       }
       for (let id = 1; id <= 4; id++) up(id);
+      const L0 = T.getLevel(level); S.rings.forEach((Q, k) => { if (Math.abs(Q.x - L0.rings[k].x) + Math.abs(Q.y - L0.rings[k].y) > 1e-6) bad = 'moved'; });
       for (const Q of S.rings) { if (!isFinite(Q.x + Q.y + Q.rot + Q.gripA)) bad = 'nan'; if (Q.alive && (Q.x - Q.r < S.tray.x0 || Q.x + Q.r > S.tray.x1 || Q.y - Q.r < S.tray.y0 || Q.y + Q.r > S.tray.y1)) bad = 'outside'; }
       const sol = S.rings.some(Q => Q.alive) ? T.solve(S) : [];
       out.push(n + ':' + (bad || (sol ? 'ok' : 'stuck')));
@@ -353,9 +354,9 @@
       while (S.rings.some(R => R.alive) && guard++ < 40) {
         const sol = T.solve(S); if (!sol) break; const mv = sol[0], R = S.rings[mv.i];
         const g = gripPos(R), p = window.__ttr.toScreen(g.bx, g.by); down(p.x, p.y, 99);
-        const steps = Math.ceil(Math.abs(mv.delta) / 0.08);
+        const sh = location.hash.includes('nearmiss') && Math.abs(mv.delta) > 0.45 ? Math.sign(mv.delta) * 0.4 : 0; mv.delta -= sh; const steps = Math.max(1, Math.ceil(Math.abs(mv.delta) / 0.08));
         for (let k = 1; k <= steps; k++) { const a = R.rot + R.gripOff + Math.sign(mv.delta) * 0.08 * 0 + 0, ang = (g.a) + mv.delta * k / steps, d = R.r + RW / 2 + 44, q = window.__ttr.toScreen(R.x + Math.cos(ang) * d, R.y + Math.sin(ang) * d); move(q.x, q.y, 99); await wait(5); }
-        up(99); await wait(20);
+        up(99); await wait(sh ? 700 : 20);
       }
       await wait(900); res.push(n + ':' + (won > 0 ? 'WIN' : 'FAIL'));
     }
